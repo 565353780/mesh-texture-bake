@@ -4,3 +4,5 @@ pip3 install -U SentencePiece accelerate trimesh PyMCubes xatlas libigl ninja gr
 pip3 install -U git+https://github.com/facebookresearch/pytorch3d@stable
 pip3 install -U git+https://github.com/NVlabs/nvdiffrast
 pip3 install -U open3d
+
+pip install "huggingface_hub[cli]"
