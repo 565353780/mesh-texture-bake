@@ -120,13 +120,13 @@ class MV23DPredictor(object):
 
     def load_data(self, intput_imgs):
         assert (6+1) == len(intput_imgs)
-        
+
         input_images, input_cams = self.load_images_and_cameras(intput_imgs, self.elevation_list, self.azimuth_list)
         input_cams[-1, :] = 0 # for user input view
-        
+
         data = {}
-        data["input_view"] = input_images.unsqueeze(0).to(self.device)    # 1 4 3 512 512
-        data["input_view_cam"] = input_cams.unsqueeze(0).to(self.device)  # 1 4 20
+        data["input_view"] = input_images.unsqueeze(0).to(self.device)    # 1 7 3 504 504
+        data["input_view_cam"] = input_cams.unsqueeze(0).to(self.device)  # 1 7 20
         return data
 
     @torch.no_grad()
@@ -140,7 +140,7 @@ class MV23DPredictor(object):
     ):
         os.makedirs(save_dir, exist_ok=True)
         print(save_dir)
-        
+
         with torch.cuda.amp.autocast():
             self.model.export_mesh_with_uv(
                 data = self.load_data(intput_imgs),

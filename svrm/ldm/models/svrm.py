@@ -121,34 +121,12 @@ class SVRMModel(torch.nn.Module):
         self.render = instantiate_from_config(render_config).half()
         self.device = device
         count_params(self, verbose=True)
-        
 
     @torch.no_grad()
-    def export_mesh_with_uv(
-        self, 
-        data, 
-        mesh_size: int = 384, 
-        ctx = None, 
-        context_type = 'cuda', 
-        texture_res = 1024,
-        target_face_count = 10000,
-        do_texture_mapping = True,
-        out_dir = 'outputs/test'
-    ):
-        """
-        do_texture_mapping: True for ray texture, False for vertices texture
-        """
-        
-        obj_vertext_path = os.path.join(out_dir, 'mesh_vertex_colors.obj')
-        
-        if do_texture_mapping:
-            obj_path = os.path.join(out_dir, 'mesh.obj')
-            obj_texture_path = os.path.join(out_dir, 'texture.png')
-            obj_mtl_path = os.path.join(out_dir, 'texture.mtl')
-            glb_path = os.path.join(out_dir, 'mesh.glb')
-
-        st = time.time()
-        
+    def genTriplane(
+        self,
+        data,
+    ) -> torch.Tensor:
         here = {'device': self.device, 'dtype': torch.float16}
         input_view_image = data["input_view"].to(**here)    # [b, m, c, h, w]
         input_view_cam = data["input_view_cam"].to(**here)  # [b, m, 20]
@@ -171,17 +149,26 @@ class SVRMModel(torch.nn.Module):
         # --- triplane nerf render
 
         cur_triplane = triplane_gen[0:1]
-        
+
+        return cur_triplane
+
+    @torch.no_grad()
+    def extractMesh(
+        self,
+        cur_triplane: torch.Tensor,
+        mesh_size: int = 384,
+        target_face_count: int = 10000,
+    ):
+        here = {'device': self.device, 'dtype': torch.float16}
+
         aabb = torch.tensor([[-0.6, -0.6, -0.6], [0.6, 0.6, 0.6]]).unsqueeze(0).to(**here)
+
         grid_out = self.render.forward_grid(planes=cur_triplane, grid_size=mesh_size, aabb=aabb)
 
-        print(f"=====> Triplane forward time: {time.time() - st}")
-        st = time.time()
-        
         vtx, faces = mcubes.marching_cubes(0. - grid_out['sdf'].squeeze(0).squeeze(-1).cpu().float().numpy(), 0)
-        
+
         bbox = aabb[0].cpu().numpy()
-        vtx = vtx / (mesh_size - 1)  
+        vtx = vtx / (mesh_size - 1)
         vtx = vtx * (bbox[1] - bbox[0]) + bbox[0]
 
         # refine mesh
@@ -194,7 +181,7 @@ class SVRMModel(torch.nn.Module):
                 vertices = o3d.utility.Vector3dVector(vtx_refine),
                 triangles = o3d.utility.Vector3iVector(faces_refine)
             )
-            
+
             # Function to simplify mesh using Quadric Error Metric Decimation by Garland and Heckbert
             mesh = mesh.simplify_quadric_decimation(target_face_count, boundary_weight=1.0)
 
@@ -206,48 +193,84 @@ class SVRMModel(torch.nn.Module):
             vtx_refine = mesh.v_pos.cpu().numpy()
             faces_refine = mesh.t_pos_idx.cpu().numpy()
 
+        return vtx_refine, faces_refine
+
+    @torch.no_grad()
+    def export_mesh_with_uv(
+        self,
+        data,
+        mesh_size: int = 384,
+        ctx = None,
+        context_type = 'cuda',
+        texture_res = 1024,
+        target_face_count = 10000,
+        do_texture_mapping = True,
+        out_dir = 'outputs/test'
+    ):
+        """
+        do_texture_mapping: True for ray texture, False for vertices texture
+        """
+
+        obj_vertext_path = os.path.join(out_dir, 'mesh_vertex_colors.obj')
+
+        obj_path = os.path.join(out_dir, 'mesh.obj')
+        obj_texture_path = os.path.join(out_dir, 'texture.png')
+        obj_mtl_path = os.path.join(out_dir, 'texture.mtl')
+        glb_path = os.path.join(out_dir, 'mesh.glb')
+
+        here = {'device': self.device, 'dtype': torch.float16}
+
+        st = time.time()
+
+        cur_triplane = self.genTriplane(data)
+
+        print(f"=====> Triplane forward time: {time.time() - st}")
+
+        st = time.time()
+
+        vtx_refine, faces_refine = self.extractMesh(cur_triplane, mesh_size, target_face_count)
+
         vtx_colors = self.render.forward_points(cur_triplane, torch.tensor(vtx_refine).unsqueeze(0).to(**here))
         vtx_colors = vtx_colors['rgb'].float().squeeze(0).cpu().numpy()
 
-
         with open(obj_vertext_path, 'w') as fid:
-            verts = vtx_refine[:, [1,2,0]] 
+            verts = vtx_refine[:, [1,2,0]]
             for pidx, pp in enumerate(verts):
                 color = vtx_colors[pidx]
                 fid.write('v %f %f %f %f %f %f\n' % (pp[0], pp[1], pp[2], color[0], color[1], color[2]))
             for i, f in enumerate(faces_refine):
                 f1 = f + 1
                 fid.write('f %d %d %d\n' % (f1[0], f1[1], f1[2]))
-                
+
         mesh = trimesh.load_mesh(obj_vertext_path)
         print(f"=====> generate mesh with vertex shading time: {time.time() - st}")
         st = time.time()
-        
+
         if not do_texture_mapping:
             return obj_vertext_path, None
-            
+
         ###########################################################
         #-------------    export texture    -----------------------
         ###########################################################
-        
+
         st = time.time()
-        
-        # uv unwrap 
-        vtx_tex, t_tex_idx = unwrap_uv(vtx_refine, faces_refine)      
-        vtx_refine   = torch.from_numpy(vtx_refine).to(self.device)   
-        faces_refine = torch.from_numpy(faces_refine).to(self.device)  
-        t_tex_idx    = torch.from_numpy(t_tex_idx).to(self.device)    
-        uv_clip      = torch.from_numpy(vtx_tex * 2.0 - 1.0).to(self.device) 
+
+        # uv unwrap
+        vtx_tex, t_tex_idx = unwrap_uv(vtx_refine, faces_refine)
+        vtx_refine   = torch.from_numpy(vtx_refine).to(self.device)
+        faces_refine = torch.from_numpy(faces_refine).to(self.device)
+        t_tex_idx    = torch.from_numpy(t_tex_idx).to(self.device)
+        uv_clip      = torch.from_numpy(vtx_tex * 2.0 - 1.0).to(self.device)
 
         # rasterize
         ctx = NVDiffRasterizerContext(context_type, cur_triplane.device) if ctx is None else ctx
         rast = ctx.rasterize_one(
             torch.cat([
-                uv_clip, 
-                torch.zeros_like(uv_clip[..., 0:1]), 
+                uv_clip,
+                torch.zeros_like(uv_clip[..., 0:1]),
                 torch.ones_like(uv_clip[..., 0:1])
-            ], dim=-1), 
-            t_tex_idx,  
+            ], dim=-1),
+            t_tex_idx,
             (texture_res, texture_res)
         )[0]
         hole_mask = ~(rast[:, :, 3] > 0)
@@ -258,12 +281,12 @@ class SVRMModel(torch.nn.Module):
             gb_mask_pos_scale = scale_tensor(gb_pos.unsqueeze(0).view(1, -1, 3), (-1, 1), (-1, 1))
             tex_map = self.render.forward_points(cur_triplane, gb_mask_pos_scale)['rgb']
             tex_map = tex_map.float().squeeze(0)  # (0, 1)
-            tex_map = tex_map.view((texture_res, texture_res, 3)) 
+            tex_map = tex_map.view((texture_res, texture_res, 3))
             img = uv_padding(tex_map, hole_mask)
             img = ((img/255.0) ** 0.8) * 255  # increase brightness
             img = img.clip(0, 255).astype(np.uint8)
-    
-        verts = vtx_refine.cpu().numpy()[:, [1,2,0]] 
+
+        verts = vtx_refine.cpu().numpy()[:, [1,2,0]]
         faces = faces_refine.cpu().numpy()
 
         with open(obj_mtl_path, 'w') as fid:
@@ -274,7 +297,7 @@ class SVRMModel(torch.nn.Module):
             fid.write("d 1.0\n")
             fid.write("illum 2\n")
             fid.write(f'map_Kd texture.png\n')
-        
+
         with open(obj_path, 'w') as fid:
             fid.write(f'mtllib texture.mtl\n')
             for pidx, pp in enumerate(verts):
@@ -287,9 +310,8 @@ class SVRMModel(torch.nn.Module):
                 f2 = t_tex_idx[i] + 1
                 fid.write('f %d/%d %d/%d %d/%d\n' % (f1[0], f2[0], f1[1], f2[1], f1[2], f2[2],))
 
-        cv2.imwrite(obj_texture_path, img[..., [2, 1, 0]])   
+        cv2.imwrite(obj_texture_path, img[..., [2, 1, 0]])
         mesh = trimesh.load_mesh(obj_path)
         mesh.export(glb_path, file_type='glb')
         print(f"=====> generate mesh with texture shading time: {time.time() - st}")
         return obj_path, glb_path
-  

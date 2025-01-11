@@ -100,14 +100,14 @@ class Views2Mesh():
             image_list = [img.convert('RGB') for img in image_list]
         elif gif_pil is not None:
             image_list = [img.convert('RGB') for img in ImageSequence.Iterator(gif_pil)]
-        
+
         image_input = image_list[0]
         image_list = image_list[1:] + image_list[:1]
-        
+
         seed_everything(seed)
         self.mv23d_predictor.predict(
-            image_list, 
-            save_dir = save_dir, 
+            image_list,
+            save_dir = save_dir,
             image_input = image_input,
             target_face_count = target_face_count,
             do_texture_mapping = do_texture_mapping
