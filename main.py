@@ -108,7 +108,7 @@ def get_args():
 
 if __name__ == "__main__":
     args = get_args()
-    
+
     assert not (args.text_prompt and args.image_prompt), "Text and image can only be given to one"
     assert args.text_prompt or args.image_prompt,        "Text and image can only be given to one"
 
@@ -116,46 +116,44 @@ if __name__ == "__main__":
     st = time.time()
     rembg_model = Removebg()
     image_to_views_model = Image2Views(
-        device=args.device, 
+        device=args.device,
         use_lite=args.use_lite,
         save_memory=args.save_memory
     )
-    
+
     views_to_mesh_model = Views2Mesh(
-        args.mv23d_cfg_path, 
-        args.mv23d_ckt_path, 
-        args.device, 
+        args.mv23d_cfg_path,
+        args.mv23d_ckt_path,
+        args.device,
         use_lite=args.use_lite,
         save_memory=args.save_memory
     )
-    
+
     if args.text_prompt:
         text_to_image_model = Text2Image(
             pretrain = args.text2image_path,
-            device = args.device, 
+            device = args.device,
             save_memory = args.save_memory
         )
-        
+
     if args.do_bake and BAKE_AVAILEBLE:
         mesh_baker = MeshBaker(
             device = args.device,
             align_times = args.bake_align_times
         )
-            
+
     if check_bake_available():
         gif_renderer = GifRenderer(device=args.device)
-        
+
     print(f"Init Models cost {time.time()-st}s")
-    
-    # ---- ----- ---- ---- ---- ----
 
     os.makedirs(args.save_folder, exist_ok=True)
 
     # stage 1, text to image
     if args.text_prompt:
         res_rgb_pil = text_to_image_model(
-            args.text_prompt, 
-            seed=args.t2i_seed,  
+            args.text_prompt,
+            seed=args.t2i_seed,
             steps=args.t2i_steps
         )
         res_rgb_pil.save(os.path.join(args.save_folder, "img.jpg"))
@@ -176,19 +174,19 @@ if __name__ == "__main__":
 
     # stage 4, views to mesh
     views_to_mesh_model(
-        views_grid_pil, 
-        cond_img, 
+        views_grid_pil,
+        cond_img,
         seed = args.gen_seed,
         target_face_count = args.max_faces_num,
         save_folder = args.save_folder,
         do_texture_mapping = args.do_texture_mapping
     )
-    
+
     # stage 5, baking
     mesh_file_for_render = None
     if args.do_bake and BAKE_AVAILEBLE:
         mesh_file_for_render = mesh_baker(args.save_folder)
-        
+
     # stage 6, render gif
     # todo fix: if init folder unclear, it maybe mistake rendering
     if args.do_render:
@@ -198,9 +196,9 @@ if __name__ == "__main__":
             baked_fld_list = sorted(glob(args.save_folder + '/view_*/bake/mesh.obj'))
             mesh_file_for_render = baked_fld_list[-1] if len(baked_fld_list)>=1 else args.save_folder+'/mesh.obj'
             assert os.path.exists(mesh_file_for_render), f"{mesh_file_for_render} file not found"
-            
+
         print("Rendering 3d file:", mesh_file_for_render)
-        
+
         gif_renderer(
             mesh_file_for_render,
             gif_dst_path = os.path.join(args.save_folder, 'output.gif'),
