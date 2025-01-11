@@ -23,11 +23,10 @@
 # by Tencent in accordance with TENCENT HUNYUAN COMMUNITY LICENSE AGREEMENT.l
 
 import os
+import time
 import warnings
 import argparse
-import time
 from PIL import Image
-import torch
 
 warnings.simplefilter('ignore', category=UserWarning)
 warnings.simplefilter('ignore', category=FutureWarning)

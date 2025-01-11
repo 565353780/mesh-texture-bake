@@ -26,6 +26,10 @@ cd ./third_party
 git clone --recursive https://github.com/naver/dust3r.git
 
 cd ..
+
+https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx
+->
+$HOME/.u2net/u2net.onnx
 ```
 
 ## Setup
